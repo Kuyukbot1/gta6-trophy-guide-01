@@ -8,7 +8,7 @@
 // Outside the grader, MAKEFUN_OUTPUT_DIR stands in for /output. The program
 // is deterministic: the same input files always produce the same dossier.
 
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildDossier } from "./vendor/makefun-frontend.ts";
@@ -17,7 +17,8 @@ const repoRoot = dirname(fileURLToPath(import.meta.url));
 const outputDir = process.env.MAKEFUN_OUTPUT_DIR || "/output";
 
 function freshOutputDirectory(path) {
-  if (existsSync(path)) rmSync(path, { recursive: true, force: true });
+  // The grader's /output is a mounted writable volume: never remove it,
+  // just make sure it exists (the kit starter does the same).
   mkdirSync(path, { recursive: true });
 }
 
@@ -33,7 +34,7 @@ function handIn() {
     text_max_bytes: 163840,
     screenshots: { max: 4, max_bytes: 262144 },
     app_max_files: 993,
-    app_max_bytes: 16777216,
+    app_max_bytes: 50331648,
   });
   writeFileSync(join(outputDir, "dossier.json"), dossier, "utf8");
   console.log("Handed in: " + outputDir + "/dossier.json (" + dossier.length + " bytes)");
