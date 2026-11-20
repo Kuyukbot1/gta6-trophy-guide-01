@@ -1,40 +1,71 @@
-// Filtering: kind chips, grade, search text, earned-only, and the spoiler
-// rule. A story trophy stays hidden while spoiler mode is on and it is
-// not yet earned.
-export const KIND_NAMES = {
-  all: 'All',
-  story: 'Story',
-  missable: 'Missable',
-  collectible: 'Collectibles',
-  activity: 'Activities',
-  side: 'Side missions',
-  robbery: 'Robberies',
-  combat: 'Combat',
-  money: 'Money & property',
-};
+// Filtering and the spoiler rule for the Leonida Trophy Atlas.
+// A trophy is spoiler-masked when the spoiler setting is on, the trophy is
+// a story trophy the player has not earned yet, and it is marked hidden.
+// Earned story trophies are never masked: earning one is the reveal.
 
-export const KIND_SEQUENCE = ['all', 'story', 'missable', 'collectible', 'activity', 'side', 'robbery', 'combat', 'money'];
-
-export function spoilerHides(trophy, done, spoilerOn) {
-  return spoilerOn && trophy.kind === 'story' && !done.has(trophy.id);
+export function spoilerMasked(trophy, hideSpoilers, earnedSet) {
+  return hideSpoilers && trophy.hidden === true && trophy.kind === "story" && !earnedSet.has(trophy.id);
 }
 
-function matchesQuery(trophy, query) {
-  if (!query) return true;
-  const haystack = `${trophy.name} ${trophy.description} ${trophy.guide} ${trophy.kind}`.toLowerCase();
-  return haystack.includes(query);
-}
+export function filterTrophies(trophies, options) {
+  const query = (options.query || "").trim().toLowerCase();
+  const kind = options.kind || "all";
+  const grade = options.grade || "all";
+  const earned = options.earned || "all";
+  const earnedSet = options.earnedSet || new Set();
 
-export function filterTrophies(trophies, ui, done) {
-  const query = ui.query.trim().toLowerCase();
   return trophies.filter((trophy) => {
-    if (ui.kind === 'missable') {
-      if (!trophy.missable) return false;
-    } else if (ui.kind !== 'all' && trophy.kind !== ui.kind) {
-      return false;
+    if (kind !== "all" && trophy.kind !== kind) return false;
+    if (grade !== "all" && trophy.grade !== grade) return false;
+    if (earned === "earned" && !earnedSet.has(trophy.id)) return false;
+    if (earned === "unearned" && earnedSet.has(trophy.id)) return false;
+    if (query) {
+      const haystack = [trophy.name, trophy.description, trophy.guide, trophy.kind, trophy.grade]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(query)) return false;
     }
-    if (ui.grade !== 'all' && trophy.grade !== ui.grade) return false;
-    if (ui.earnedOnly && !done.has(trophy.id)) return false;
-    return matchesQuery(trophy, query);
+    return true;
   });
+}
+
+export function gradeLabel(grade) {
+  switch (grade) {
+    case "platinum":
+      return "Platinum";
+    case "gold":
+      return "Gold";
+    case "silver":
+      return "Silver";
+    case "bronze":
+      return "Bronze";
+    default:
+      return grade;
+  }
+}
+
+export function kindLabel(kind) {
+  switch (kind) {
+    case "story":
+      return "Story";
+    case "side":
+      return "Side quest";
+    case "collectibles":
+      return "Collectibles";
+    case "activities":
+      return "Activities";
+    case "crime":
+      return "Crime";
+    case "money":
+      return "Money";
+    case "completion":
+      return "100% completion";
+    case "misc":
+      return "Odd & unconfirmed";
+    case "platinum":
+      return "Platinum";
+    default:
+      return kind;
+  }
 }

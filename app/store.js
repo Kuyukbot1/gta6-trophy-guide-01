@@ -1,58 +1,104 @@
-// Save data: which trophies are earned lives in localStorage, and can be
-// downloaded to a file and loaded back. Nothing ever leaves the browser.
-export const PROGRESS_KEY = 'leonida-platinum-progress-v1';
-export const SETTINGS_KEY = 'leonida-platinum-settings-v1';
+// Progress store for the Leonida Trophy Atlas.
+// Earned trophy ids and the spoiler setting live in localStorage on this
+// device only; nothing is sent anywhere. Import/export move the same JSON
+// as a file, so progress can be carried to another browser by hand.
 
-export function readProgress() {
+const STORAGE_KEY = "gta6-trophy-atlas-v1";
+
+function readStore() {
   try {
-    const raw = localStorage.getItem(PROGRESS_KEY);
-    if (!raw) return new Set();
-    const ids = JSON.parse(raw);
-    if (!Array.isArray(ids)) return new Set();
-    return new Set(ids.filter((id) => Number.isInteger(id) && id >= 1 && id <= 55));
-  } catch {
-    return new Set();
-  }
-}
-
-export function writeProgress(done) {
-  localStorage.setItem(PROGRESS_KEY, JSON.stringify([...done].sort((a, b) => a - b)));
-}
-
-export function readPrefs() {
-  try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return { spoiler: false };
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { earned: [], hideSpoilers: true };
     const parsed = JSON.parse(raw);
-    return { spoiler: parsed.spoiler === true };
-  } catch {
-    return { spoiler: false };
+    if (!parsed || typeof parsed !== "object") return { earned: [], hideSpoilers: true };
+    return {
+      earned: Array.isArray(parsed.earned) ? parsed.earned.filter((id) => typeof id === "string") : [],
+      hideSpoilers: parsed.hideSpoilers !== false,
+    };
+  } catch (_err) {
+    return { earned: [], hideSpoilers: true };
   }
 }
 
-export function writePrefs(prefs) {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(prefs));
+function writeStore(state) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (_err) {
+    // Storage full or blocked: progress just does not persist this time.
+  }
 }
 
-export function downloadProgress(done) {
-  const blob = new Blob(
-    [JSON.stringify({ game: 'Grand Theft Auto VI', earned: [...done].sort((a, b) => a - b) }, null, 2)],
-    { type: 'application/json' },
-  );
+let state = readStore();
+
+export function earnedIds() {
+  return new Set(state.earned);
+}
+
+export function isEarned(id) {
+  return state.earned.includes(id);
+}
+
+export function toggleEarned(id) {
+  const at = state.earned.indexOf(id);
+  if (at >= 0) state.earned.splice(at, 1);
+  else state.earned.push(id);
+  writeStore(state);
+  return state.earned.includes(id);
+}
+
+export function earnedCount() {
+  return state.earned.length;
+}
+
+export function spoilersHidden() {
+  return state.hideSpoilers;
+}
+
+export function setSpoilersHidden(hidden) {
+  state.hideSpoilers = hidden;
+  writeStore(state);
+}
+
+export function exportProgress() {
+  const blob = new Blob([JSON.stringify({ earned: state.earned, hideSpoilers: state.hideSpoilers }, null, 2)], {
+    type: "application/json",
+  });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'gta6-trophy-progress.json';
-  a.click();
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "gta6-trophy-atlas-progress.json";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
   URL.revokeObjectURL(url);
 }
 
-export async function parseProgressFile(file) {
-  const text = await file.text();
-  const parsed = JSON.parse(text);
-  const ids = Array.isArray(parsed) ? parsed : parsed.earned;
-  if (!Array.isArray(ids)) throw new Error('not a progress file');
-  const valid = ids.filter((id) => Number.isInteger(id) && id >= 1 && id <= 55);
-  if (valid.length === 0 && ids.length > 0) throw new Error('no valid trophy ids');
-  return new Set(valid);
+export function importProgressFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read that file."));
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result));
+        if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.earned)) {
+          reject(new Error("That file does not look like an Atlas progress export."));
+          return;
+        }
+        state = {
+          earned: parsed.earned.filter((id) => typeof id === "string"),
+          hideSpoilers: parsed.hideSpoilers !== false,
+        };
+        writeStore(state);
+        resolve(state.earned.length);
+      } catch (_err) {
+        reject(new Error("That file does not look like an Atlas progress export."));
+      }
+    };
+    reader.readAsText(file);
+  });
+}
+
+export function resetProgress() {
+  state = { earned: [], hideSpoilers: true };
+  writeStore(state);
 }

@@ -1,177 +1,175 @@
-// Leonida Platinum — start-up: loads the trophy list and roadmap, wires
-// the checklist, filters, spoiler setting, tabs, hash routing and saving.
-import { readProgress, writeProgress, readPrefs, writePrefs, downloadProgress, parseProgressFile } from './store.js';
-import { KIND_NAMES, KIND_SEQUENCE, filterTrophies } from './filters.js';
-import { paintChecklist, paintDetail, paintRoadmap, paintMissables, paintSources } from './views.js';
+// Boot and hash routing for the Leonida Trophy Atlas.
+// Loads the trophy and roadmap data, renders the current view from the
+// hash, and wires the toolbar (search, filters, spoiler setting, export,
+// import, reset). The app is fully offline: the only fetches are the two
+// JSON files it ships with.
 
-const ui = {
-  tab: 'checklist',
-  kind: 'all',
-  grade: 'all',
-  query: '',
-  earnedOnly: false,
-  spoiler: false,
-};
+import {
+  earnedCount,
+  earnedIds,
+  exportProgress,
+  importProgressFile,
+  isEarned,
+  resetProgress,
+  setSpoilersHidden,
+  spoilersHidden,
+  toggleEarned,
+} from "./store.js";
+import {
+  renderChecklist,
+  renderDetail,
+  renderMissables,
+  renderRoadmap,
+  renderSources,
+  updateProgress,
+} from "./views.js";
 
-let guide = null;
-let plan = null;
-let done = readProgress();
-let openId = 28;
+const view = document.getElementById("view");
+const detail = document.getElementById("detail");
+const detailBody = document.getElementById("detail-body");
+const detailClose = document.getElementById("detail-close");
 
-const listEl = document.getElementById('trophyList');
-const metaEl = document.getElementById('listMeta');
-const detailEl = document.getElementById('detailCol');
-const toolbarEl = document.getElementById('toolbar');
+const searchInput = document.getElementById("search");
+const kindFilter = document.getElementById("kind-filter");
+const gradeFilter = document.getElementById("grade-filter");
+const earnedFilter = document.getElementById("earned-filter");
+const spoilerToggle = document.getElementById("spoiler-toggle");
+const exportBtn = document.getElementById("export-btn");
+const importFile = document.getElementById("import-file");
+const resetBtn = document.getElementById("reset-btn");
 
-function findTrophy(id) {
-  return guide.trophies.find((trophy) => trophy.id === id) ?? null;
+let trophies = [];
+let roadmap = null;
+let openTrophyId = null;
+
+function filters() {
+  return {
+    query: searchInput.value,
+    kind: kindFilter.value,
+    grade: gradeFilter.value,
+    earned: earnedFilter.value,
+    earnedSet: earnedIds(),
+    hideSpoilers: spoilersHidden(),
+    onToggle: handleToggle,
+    onOpen: openTrophy,
+  };
 }
 
-function paintProgress() {
-  const total = guide.trophies.length;
-  const pct = Math.round((done.size / total) * 100);
-  document.getElementById('earnedCount').textContent = String(done.size);
-  document.getElementById('progressFill').style.width = `${pct}%`;
-  document.getElementById('progressNote').textContent = `${pct}% to the platinum — ${total - done.size} to go`;
-  const counts = {};
-  for (const trophy of guide.trophies) counts[trophy.grade] = (counts[trophy.grade] ?? 0) + (done.has(trophy.id) ? 1 : 0);
-  document.getElementById('gradeCounts').innerHTML =
-    `Platinum <b>${counts.platinum ?? 0}/1</b> · Gold <b>${counts.gold ?? 0}/2</b> · Silver <b>${counts.silver ?? 0}/6</b> · Bronze <b>${counts.bronze ?? 0}/46</b>`;
+function refreshProgress() {
+  updateProgress(earnedCount(), trophies.length);
 }
 
-function showTab() {
-  const onChecklist = ui.tab === 'checklist';
-  listEl.hidden = !onChecklist;
-  metaEl.hidden = !onChecklist;
-  toolbarEl.style.display = onChecklist ? '' : 'none';
-  document.querySelector('.layout').classList.toggle('no-detail', !onChecklist);
-  document.getElementById('roadmapPage').hidden = ui.tab !== 'roadmap';
-  document.getElementById('missablesPage').hidden = ui.tab !== 'missables';
-  document.getElementById('sourcesPage').hidden = ui.tab !== 'sources';
-  document.querySelectorAll('.tab').forEach((tab) => {
-    tab.classList.toggle('active', tab.dataset.tab === ui.tab);
+function render() {
+  const hash = window.location.hash || "#/checklist";
+  const parts = hash.replace(/^#\//, "").split("/");
+  const page = parts[0] || "checklist";
+  const arg = parts[1] || null;
+
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.classList.toggle("is-active", tab.dataset.tab === page || (page === "trophy" && tab.dataset.tab === "checklist"));
   });
-}
 
-function paint() {
-  paintProgress();
-  showTab();
-  if (ui.tab !== 'checklist') return;
-  const filtered = filterTrophies(guide.trophies, ui, done);
-  paintChecklist(listEl, metaEl, filtered, ui, done, openId,
-    (id) => { openId = id; location.hash = `#/trophy/${id}`; paint(); },
-    (id, checked) => { flipEarned(id, checked); });
-  paintDetail(detailEl, findTrophy(openId), guide.sources, done, ui.spoiler,
-    (id, checked) => { flipEarned(id, checked); });
-}
-
-function flipEarned(id, checked) {
-  if (checked) done.add(id);
-  else done.delete(id);
-  writeProgress(done);
-  paint();
-}
-
-function paintPage() {
-  if (ui.tab === 'roadmap') paintRoadmap(document.getElementById('roadmapPage'), plan);
-  if (ui.tab === 'missables') paintMissables(document.getElementById('missablesPage'), guide.trophies);
-  if (ui.tab === 'sources') paintSources(document.getElementById('sourcesPage'), guide.sources);
-}
-
-function goTab(tab) {
-  ui.tab = tab;
-  paintPage();
-  location.hash = `#/${tab}`;
-  paint();
-}
-
-function route() {
-  const hash = location.hash.replace(/^#\/?/, '');
-  if (hash.startsWith('trophy/')) {
-    const id = Number(hash.slice('trophy/'.length));
-    if (Number.isInteger(id) && findTrophy(id)) openId = id;
-    ui.tab = 'checklist';
-  } else if (['checklist', 'roadmap', 'missables', 'sources'].includes(hash)) {
-    ui.tab = hash;
+  if (page === "roadmap" && roadmap) {
+    renderRoadmap(view, roadmap, trophies);
+  } else if (page === "missables") {
+    renderMissables(view, trophies, earnedIds(), spoilersHidden());
+  } else if (page === "sources") {
+    renderSources(view);
+  } else {
+    renderChecklist(view, trophies, filters());
   }
-  paintPage();
+
+  if (page === "trophy" && arg) {
+    openTrophy(arg, true);
+  } else {
+    closeDetail();
+  }
+  refreshProgress();
+}
+
+function openTrophy(id, fromHash) {
+  const trophy = trophies.find((item) => item.id === id);
+  if (!trophy) return;
+  openTrophyId = id;
+  renderDetail(detailBody, trophy, isEarned(id), handleToggle, spoilersHidden());
+  detail.hidden = false;
+  if (!fromHash) {
+    history.replaceState(null, "", "#/trophy/" + id);
+  }
+}
+
+function closeDetail() {
+  openTrophyId = null;
+  detail.hidden = true;
+  detailBody.innerHTML = "";
+}
+
+function handleToggle(id) {
+  toggleEarned(id);
+  refreshProgress();
+  if (openTrophyId === id) {
+    const trophy = trophies.find((item) => item.id === id);
+    if (trophy) renderDetail(detailBody, trophy, isEarned(id), handleToggle, spoilersHidden());
+  }
+  render();
 }
 
 function wireToolbar() {
-  const chips = document.getElementById('kindChips');
-  for (const kind of KIND_SEQUENCE) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'chip' + (kind === 'all' ? ' active' : '');
-    chip.dataset.kind = kind;
-    chip.textContent = KIND_NAMES[kind];
-    chip.addEventListener('click', () => {
-      ui.kind = kind;
-      chips.querySelectorAll('.chip').forEach((c) => c.classList.toggle('active', c === chip));
-      paint();
-    });
-    chips.append(chip);
-  }
-
-  document.getElementById('search').addEventListener('input', (event) => {
-    ui.query = event.target.value;
-    paint();
+  searchInput.addEventListener("input", () => render());
+  kindFilter.addEventListener("change", () => render());
+  gradeFilter.addEventListener("change", () => render());
+  earnedFilter.addEventListener("change", () => render());
+  spoilerToggle.checked = spoilersHidden();
+  spoilerToggle.addEventListener("change", () => {
+    setSpoilersHidden(spoilerToggle.checked);
+    render();
   });
-  document.getElementById('gradeFilter').addEventListener('change', (event) => {
-    ui.grade = event.target.value;
-    paint();
-  });
-  document.getElementById('earnedOnly').addEventListener('change', (event) => {
-    ui.earnedOnly = event.target.checked;
-    paint();
-  });
-  const spoilerToggle = document.getElementById('spoilerToggle');
-  spoilerToggle.checked = ui.spoiler;
-  spoilerToggle.addEventListener('change', (event) => {
-    ui.spoiler = event.target.checked;
-    writePrefs({ spoiler: ui.spoiler });
-    paint();
-  });
-  document.getElementById('exportBtn').addEventListener('click', () => downloadProgress(done));
-  document.getElementById('importFile').addEventListener('change', async (event) => {
-    const file = event.target.files[0];
+  exportBtn.addEventListener("click", () => exportProgress());
+  importFile.addEventListener("change", async () => {
+    const file = importFile.files && importFile.files[0];
     if (!file) return;
     try {
-      done = await parseProgressFile(file);
-      writeProgress(done);
-      paint();
-    } catch {
-      alert('That file is not a trophy progress export from this guide.');
+      const count = await importProgressFile(file);
+      spoilerToggle.checked = spoilersHidden();
+      render();
+      alert("Imported progress: " + count + " trophies earned.");
+    } catch (err) {
+      alert(err.message || "That file could not be imported.");
     }
-    event.target.value = '';
+    importFile.value = "";
   });
-  document.getElementById('resetBtn').addEventListener('click', () => {
-    if (confirm('Clear all earned trophies?')) {
-      done = new Set();
-      writeProgress(done);
-      paint();
+  resetBtn.addEventListener("click", () => {
+    if (window.confirm("Clear all earned trophies and reset the spoiler setting?")) {
+      resetProgress();
+      spoilerToggle.checked = spoilersHidden();
+      render();
     }
   });
-  document.querySelectorAll('.tab').forEach((tab) => {
-    tab.addEventListener('click', () => goTab(tab.dataset.tab));
+  detailClose.addEventListener("click", () => {
+    closeDetail();
+    history.replaceState(null, "", "#/checklist");
+    render();
   });
-  window.addEventListener('hashchange', () => { route(); paint(); });
 }
 
-async function start() {
-  const [trophyDoc, roadmapDoc] = await Promise.all([
-    (await fetch('data/trophies.json')).json(),
-    (await fetch('data/roadmap.json')).json(),
-  ]);
-  guide = trophyDoc;
-  plan = roadmapDoc;
-
-  const prefs = readPrefs();
-  ui.spoiler = prefs.spoiler;
-
+async function boot() {
   wireToolbar();
-  route();
-  paint();
+  try {
+    const [trophyRes, roadmapRes] = await Promise.all([
+      fetch("./data/trophies.json"),
+      fetch("./data/roadmap.json"),
+    ]);
+    if (!trophyRes.ok || !roadmapRes.ok) throw new Error("Data files did not load.");
+    const trophyData = await trophyRes.json();
+    const roadmapData = await roadmapRes.json();
+    trophies = Array.isArray(trophyData) ? trophyData : trophyData.trophies || [];
+    roadmap = roadmapData;
+  } catch (_err) {
+    view.innerHTML = "<p class='empty'>The trophy data could not be loaded. Reload the page — this app works offline once its files are served.</p>";
+    return;
+  }
+  window.addEventListener("hashchange", render);
+  render();
 }
 
-start();
+boot();
